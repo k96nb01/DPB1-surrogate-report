@@ -1,0 +1,256 @@
+---
+format:
+  typst:
+    mainfont: "Arial"
+    fontsize: 10pt
+    margin:
+      x: .75in
+      y: .75in
+    include-in-header:
+        - text: |
+            /* Color links */
+            #show link: set text(fill: rgb(0, 0, 255))
+execute:
+  echo: false
+params:
+  IMGT_version: "3.62.0"
+---
+
+```{r}
+#| include: false
+# Load packages
+library(tidyverse)
+library(immunogenetr)
+library(HLAtools)
+library(gt)
+```
+
+```{r}
+#| include: false
+# Perform the protein alignment for the DPB1 locus using HLAtools
+DPB1_prot_alignment <- alignmentFull(
+  loci = "DPB1",
+  alignType = "prot",
+  version = params$IMGT_version
+) %>%
+  first() %>%
+  first() %>%
+  as_tibble() %>%
+  # Add "p" to beginning of the AA positions to make them easier to select.
+  rename_with(~ if_else(str_detect(., "[:digit:]$"), str_c("p", .), .))
+```
+
+```{r}
+#| include: false
+# Define the DPB1 HVRs
+HVR_A <- c("p8", "p9", "p11", "p12")
+HVR_B <- c("p33", "p35", "p36")
+HVR_C <- c("p55", "p56", "p57")
+HVR_D <- c("p65", "p66", "p69")
+HVR_E <- c("p72", "p73", "p76")
+HVR_F <- c("p84", "p85", "p86", "p87")
+HVR_exon_3 <- c("p96", "p170")
+
+# Generate a table of HVRs for all 2-field DPB1 alleles.
+(DPB1_HVRs_full <- DPB1_prot_alignment
+  # Keep only the first two-field allele
+  %>% slice_head(by = trimmed_allele)
+  # Add the HLA prefix to the names
+  %>% mutate(trimmed_allele = HLA_prefix_add(trimmed_allele))
+  # Keep only the positions encoding the HVRs
+  %>% select(trimmed_allele, all_of(c(HVR_A, HVR_B, HVR_C, HVR_D, HVR_E, HVR_F, HVR_exon_3)))
+)
+```
+
+
+
+
+```{r}
+#| include: false
+# Load the core DPB1 alleles
+(core_DPB1_1 <-  read_rds("core_DPB1_master.rds"))
+
+# Filter the full list of DPB1 with HVRs for the core list
+(DPB1_HVRs_core <- DPB1_HVRs_full
+ %>% filter(trimmed_allele %in% HLA_prefix_add(core_DPB1_1))
+ )
+```
+
+```{r}
+#| include: false
+# Create a list of most-closely aligning alleles for all alleles in IMGT version.
+
+# Define the DPB1 HVRs
+HVR_C <- c("p55.test", "p56.test", "p57.test")
+HVR_F <- c("p84.test", "p85.test", "p86.test", "p87.test")
+HVR_exon_3 <- c("p96.test", "p170.test")
+
+# Create a vector of example alleles for testing.
+
+example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
+
+(DPB1_surrogates <- DPB1_HVRs_full
+  #%>% filter(trimmed_allele %in% example_alleles)
+  %>% cross_join(DPB1_HVRs_core, suffix = c(".test", ".SAB"))
+  %>% mutate(
+    p8 = p8.SAB == p8.test,
+    p9 = p9.SAB == p9.test,
+    p11 = p11.SAB == p11.test,
+    p12 = p12.SAB == p12.test,
+    p33 = p33.SAB == p33.test,
+    p35 = p35.SAB == p35.test,
+    p36 = p36.SAB == p36.test,
+    p55 = p55.SAB == p55.test,
+    p56 = p56.SAB == p56.test,
+    p57 = p57.SAB == p57.test,
+    p65 = p65.SAB == p65.test,
+    p66 = p66.SAB == p66.test,
+    p69 = p69.SAB == p69.test,
+    p72 = p72.SAB == p72.test,
+    p73 = p73.SAB == p73.test,
+    p76 = p76.SAB == p76.test,
+    p84 = p84.SAB == p84.test,
+    p85 = p85.SAB == p85.test,
+    p86 = p86.SAB == p86.test,
+    p87 = p87.SAB == p87.test,
+    p96 = p96.SAB == p96.test,
+    p170 = p170.SAB == p170.test,
+    .after = trimmed_allele.test
+  )
+    # First determine similarity to the three most-important HVRs (C(55), F(84) and Exon 3(96))
+  %>% mutate(primary_similarity = rowSums(across(c(p55, p56, p57, p84, p85, p86, p87, p96, p170))), .after = trimmed_allele.test)
+  # Determine similarity for the rest of the positions
+  %>% mutate(secondary_similarity = rowSums(across(c(p8, p9, p11, p12, p33, p35, p36, p65, p66, p69, p72, p73, p76))), .after = primary_similarity)
+  # Determine if any were perfect matches at the primary or secondary similarity
+  %>% mutate(
+    pirmary_match = primary_similarity == 9,
+    secondary_match = secondary_similarity == 13,
+    .after = secondary_similarity
+  )
+  # Keep alleles with the highest primary similarity
+  %>% slice_max(order_by = primary_similarity, by = trimmed_allele.test, with_ties = TRUE)
+  %>% select(trimmed_allele.test, trimmed_allele.SAB, primary_similarity:secondary_match, all_of(c(HVR_C,HVR_F, HVR_exon_3)))
+  # Record the three epitopes
+  %>% mutate(
+    ep_55 = str_c(p55.test, p56.test, p57.test),
+    ep_84 = str_c(p84.test, p85.test, p86.test, p87.test),
+    ep_96_170 = str_c(p96.test, "/", p170.test)
+    )
+  # Record the AB alleles for each test allele
+  %>% group_by(trimmed_allele.test)
+  %>% arrange(desc(secondary_similarity), .by_group = TRUE)
+  %>% ungroup()
+  %>% mutate(trimmed_allele.SAB = HLA_prefix_remove(trimmed_allele.SAB))
+  %>% mutate(trimmed_allele.test = HLA_prefix_remove(trimmed_allele.test))
+  %>% mutate(surrogates = str_flatten(trimmed_allele.SAB, collapse = ", "), .by = trimmed_allele.test)
+  %>% slice_head(by = trimmed_allele.test)
+  %>% select(trimmed_allele.test, ep_55:surrogates)
+  # Filter out null alleles
+  %>% filter(!str_detect(trimmed_allele.test, "N$"))
+  # Arrange the alleles in numeric order
+  %>% mutate(first_field = as.numeric(str_extract(trimmed_allele.test, "[:digit:]+")))
+  %>% mutate(second_field = as.numeric(str_extract(trimmed_allele.test, "(?<=:)[:digit:]+")))
+  %>% arrange(first_field, second_field)
+  %>% select(trimmed_allele.test:surrogates)
+  )
+```
+
+```{=typst}
+#align(center)[
+  #text(14pt)[*DPB1 allele surrogates*]
+]
+```
+
+**IPD-IMGT/HLA version:** `r str_extract(params$IMGT_version, "[:digit:]+.[:digit:]+")` 
+  
+**Background:** DPB1 alleles have three variable regions that define the major functional antibody epitopes, as described in Morris et al. (PMID: 39277973). For DPB1 alleles that are not present on the single antigen bead (SAB) panel, it can be difficult to determine if antibodies will react. This table provides surrogates: alleles on the SAB panel that have the same, or the closest, three functional epitopes. The surrogate alleles are listed in order of the closest match to the 3 functional epitopes, as well as closest to 4 additional variable regions described by  Laux et al. (PMID: 12792509).  
+  
+**Note:** Amino acid sequences that do not correspond to the standard epitopes
+(55AAE, DED or DEE; 84DEAV, GGPM or VGPM; 96K/170I or R/T) are highlighted in
+[yellow]{style="background-color: #ffeb3b"}.
+Similarly, many of the 96/170 sequences are missing from the IMGT/HLA database,
+and will also be highlighted in
+[yellow]{style="background-color: #ffeb3b"}.
+
+```{=typst}
+// Define reusable highlight styles with deeper color tones
+#let gray-note(gray)   = box(fill: rgb("#bdbdbd"), inset: 2pt, radius: 2pt)[gray]
+#let yellow-note(yellow) = box(fill: rgb("#ffeb3b"), inset: 2pt, radius: 2pt)[yellow]
+#let orange-note(orange) = box(fill: rgb("#ffb74d"), inset: 2pt, radius: 2pt)[orange]
+```
+
+```{r}
+#Table of DPB1 surrogates
+(DPB1_surrogates
+  %>% gt
+  %>% tab_header(title = "DPB1 alleles and core SAB surrogates")
+  %>% cols_label(
+    trimmed_allele.test = "Allele",
+    ep_55 = "55 epitope",
+    ep_84 = "84 epitope",
+    ep_96_170 = "96/170 epitope",
+    surrogates = "Surrogates"
+  )
+  %>% tab_style(
+    style = cell_fill(color = "yellow"),
+    locations = cells_body(
+      columns = ep_55,
+      rows = !ep_55 %in% c("AAE", "DEE", "DED")
+    )
+    )
+  %>% tab_style(
+    style = cell_fill(color = "yellow"),
+    locations = cells_body(
+      columns = ep_84,
+      rows = !ep_84 %in% c("DEAV", "GGPM", "VGPM")
+    )
+    )
+  %>% tab_style(
+    style = cell_fill(color = "yellow"),
+    locations = cells_body(
+      columns = ep_96_170,
+      rows = !ep_96_170 %in% c("K/I", "R/T")
+    )
+    )
+  %>%  tab_options(
+    table.width = pct(100),
+    table.align = "left",
+    table.font.name = "Arial",
+    column_labels.font.size = 10,
+    table.font.size = px(10)
+  )
+ %>% cols_width(
+    trimmed_allele.test ~ pct(8),
+    ep_55 ~ pct(10),
+    ep_84 ~ pct(10),
+    ep_96_170 ~ pct(14),
+    surrogates ~ pct(30)
+  )
+  %>% tab_style(
+    style = cell_text(align = "left"),
+    locations = list(
+      cells_column_labels(everything()),
+      cells_body(everything())
+    )
+  )
+  # %>% tab_style(
+  #   style = cell_borders(
+  #     sides = "bottom",
+  #     weight = px(1),
+  #     color = "black"
+  #   ),
+  #   locations = cells_column_labels(everything())
+  # ) 
+  # %>% tab_style(
+  #   style = cell_borders(
+  #     sides = c("top", "bottom", "left", "right"),
+  #     weight = px(0),
+  #     color = "white"
+  #   ),
+  #   locations = cells_body(everything())
+  # )
+ )
+
+invisible(DPB1_surrogates)
+```
+
