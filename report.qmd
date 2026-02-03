@@ -119,15 +119,20 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
   )
     # First determine similarity to the three most-important HVRs (C(55), F(84) and Exon 3(96))
   %>% mutate(primary_similarity = rowSums(across(c(p55, p56, p57, p84, p85, p86, p87, p96, p170))), .after = trimmed_allele.test)
+  # Determine similarity for just the 55 and 84 epitopes
+  %>% mutate(p55_p84_similarity = rowSums(across(c(p55, p56, p57, p84, p85, p86, p87))), .after = primary_similarity)
   # Determine similarity for the rest of the positions
-  %>% mutate(secondary_similarity = rowSums(across(c(p8, p9, p11, p12, p33, p35, p36, p65, p66, p69, p72, p73, p76))), .after = primary_similarity)
+  %>% mutate(secondary_similarity = rowSums(across(c(p8, p9, p11, p12, p33, p35, p36, p65, p66, p69, p72, p73, p76))), .after = p55_p84_similarity)
   # Determine if any were perfect matches at the primary or secondary similarity
   %>% mutate(
     pirmary_match = primary_similarity == 9,
+    p55_p84_match = p55_p84_similarity == 7,
     secondary_match = secondary_similarity == 13,
     .after = secondary_similarity
   )
-  # Keep alleles with the highest primary similarity
+  # Keep alleles with the highest p55_p84_similarity
+  %>% slice_max(order_by = p55_p84_similarity, by = trimmed_allele.test, with_ties = TRUE)
+  # Now keep alleles with the highest primary similarity
   %>% slice_max(order_by = primary_similarity, by = trimmed_allele.test, with_ties = TRUE)
   %>% select(trimmed_allele.test, trimmed_allele.SAB, primary_similarity:secondary_match, all_of(c(HVR_C,HVR_F, HVR_exon_3)))
   # Record the three epitopes
@@ -144,14 +149,14 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
   %>% mutate(trimmed_allele.test = HLA_prefix_remove(trimmed_allele.test))
   %>% mutate(surrogates = str_flatten(trimmed_allele.SAB, collapse = ", "), .by = trimmed_allele.test)
   %>% slice_head(by = trimmed_allele.test)
-  %>% select(trimmed_allele.test, ep_55:surrogates)
+  %>% select(trimmed_allele.test, p55_p84_match, pirmary_match, ep_55:surrogates)
   # Filter out null alleles
   %>% filter(!str_detect(trimmed_allele.test, "N$"))
   # Arrange the alleles in numeric order
   %>% mutate(first_field = as.numeric(str_extract(trimmed_allele.test, "[:digit:]+")))
   %>% mutate(second_field = as.numeric(str_extract(trimmed_allele.test, "(?<=:)[:digit:]+")))
   %>% arrange(first_field, second_field)
-  %>% select(trimmed_allele.test:surrogates)
+  %>% select(trimmed_allele.test, ep_55:ep_96_170, p55_p84_match, pirmary_match, surrogates)
   )
 ```
 
@@ -171,6 +176,10 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
 Similarly, many of the 96/170 sequences are missing from the IMGT/HLA database,
 and will also be highlighted in
 [yellow]{style="background-color: #ffeb3b"}.
+Lastly, many alleles do not have a surrogate on the SAB panel that matches all
+three epitopes, and are again highlighted in
+[yellow]{style="background-color: #ffeb3b"}.
+These alleles will need more careful epitope analysis to predict antibody reactivity.
 
 ```{=typst}
 // Define reusable highlight styles with deeper color tones
@@ -189,6 +198,8 @@ and will also be highlighted in
     ep_55 = "55 epitope",
     ep_84 = "84 epitope",
     ep_96_170 = "96/170 epitope",
+    p55_p84_match = "55 and 84 epitope match",
+    pirmary_match = "3 epitope match",
     surrogates = "Surrogates"
   )
   %>% tab_style(
@@ -212,6 +223,20 @@ and will also be highlighted in
       rows = !ep_96_170 %in% c("K/I", "R/T")
     )
     )
+  %>% tab_style(
+    style = cell_fill(color = "yellow"),
+    locations = cells_body(
+      columns = p55_p84_match,
+      rows = !p55_p84_match
+    )
+    )
+   %>% tab_style(
+    style = cell_fill(color = "yellow"),
+    locations = cells_body(
+      columns = pirmary_match,
+      rows = !pirmary_match
+    )
+    )
   %>%  tab_options(
     table.width = pct(100),
     table.align = "left",
@@ -224,6 +249,7 @@ and will also be highlighted in
     ep_55 ~ pct(10),
     ep_84 ~ pct(10),
     ep_96_170 ~ pct(14),
+    pirmary_match ~ pct(14),
     surrogates ~ pct(30)
   )
   %>% tab_style(
