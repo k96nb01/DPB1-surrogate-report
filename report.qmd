@@ -62,9 +62,6 @@ HVR_exon_3 <- c("p96", "p170")
 )
 ```
 
-
-
-
 ```{r}
 #| include: false
 # Load the core DPB1 alleles
@@ -132,9 +129,16 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
   )
   # Keep alleles with the highest p55_p84_similarity
   %>% slice_max(order_by = p55_p84_similarity, by = trimmed_allele.test, with_ties = TRUE)
+  # Record the surrogate alleles for just the p55 and p84 epitopes.
+  %>% group_by(trimmed_allele.test)
+  %>% arrange(desc(primary_similarity), desc(secondary_similarity), .by_group = TRUE)
+  %>% ungroup()
+  %>% mutate(trimmed_allele.SAB = HLA_prefix_remove(trimmed_allele.SAB))
+  %>% mutate(trimmed_allele.test = HLA_prefix_remove(trimmed_allele.test))
+  %>% mutate(two_epitope_surrogates = str_flatten(trimmed_allele.SAB, collapse = ", "), .by = trimmed_allele.test)
   # Now keep alleles with the highest primary similarity
   %>% slice_max(order_by = primary_similarity, by = trimmed_allele.test, with_ties = TRUE)
-  %>% select(trimmed_allele.test, trimmed_allele.SAB, primary_similarity:secondary_match, all_of(c(HVR_C,HVR_F, HVR_exon_3)))
+  %>% select(trimmed_allele.test, trimmed_allele.SAB, primary_similarity:secondary_match, two_epitope_surrogates, all_of(c(HVR_C,HVR_F, HVR_exon_3)))
   # Record the three epitopes
   %>% mutate(
     ep_55 = str_c(p55.test, p56.test, p57.test),
@@ -147,16 +151,25 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
   %>% ungroup()
   %>% mutate(trimmed_allele.SAB = HLA_prefix_remove(trimmed_allele.SAB))
   %>% mutate(trimmed_allele.test = HLA_prefix_remove(trimmed_allele.test))
-  %>% mutate(surrogates = str_flatten(trimmed_allele.SAB, collapse = ", "), .by = trimmed_allele.test)
+  %>% mutate(three_epitope_surrogates = str_flatten(trimmed_allele.SAB, collapse = ", "), .by = trimmed_allele.test)
   %>% slice_head(by = trimmed_allele.test)
-  %>% select(trimmed_allele.test, p55_p84_match, pirmary_match, ep_55:surrogates)
+  %>% select(trimmed_allele.test, p55_p84_match, pirmary_match, ep_55:ep_96_170, two_epitope_surrogates, three_epitope_surrogates)
   # Filter out null alleles
   %>% filter(!str_detect(trimmed_allele.test, "N$"))
   # Arrange the alleles in numeric order
   %>% mutate(first_field = as.numeric(str_extract(trimmed_allele.test, "[:digit:]+")))
   %>% mutate(second_field = as.numeric(str_extract(trimmed_allele.test, "(?<=:)[:digit:]+")))
   %>% arrange(first_field, second_field)
-  %>% select(trimmed_allele.test, ep_55:ep_96_170, p55_p84_match, pirmary_match, surrogates)
+  %>% select(-first_field, -second_field)
+  # # Only keep surrogates if they are exact matches 
+  %>% mutate(three_epitope_surrogates = if_else(pirmary_match, three_epitope_surrogates, "No 3-epitope surrogates"))
+  # If there are no 3-epitope surrogates, but there are 2, list them.
+  %>% mutate(two_epitope_surrogates = case_when(
+    three_epitope_surrogates == "No 3-epitope surrogates" & p55_p84_match ~ two_epitope_surrogates,
+    three_epitope_surrogates == "No 3-epitope surrogates" & !p55_p84_match ~ "No 2-epitope surrogates",
+    .default = ""
+  ))
+  %>% select(trimmed_allele.test:ep_96_170, three_epitope_surrogates, two_epitope_surrogates)
   )
 ```
 
@@ -168,7 +181,7 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
 
 **IPD-IMGT/HLA version:** `r str_extract(params$IMGT_version, "[:digit:]+.[:digit:]+")` 
   
-**Background:** DPB1 alleles have three variable regions that define the major functional antibody epitopes, as described in Morris et al. (PMID: 39277973). For DPB1 alleles that are not present on the single antigen bead (SAB) panel, it can be difficult to determine if antibodies will react. This table provides surrogates: alleles on the SAB panel that have the same, or the closest, three functional epitopes. The surrogate alleles are listed in order of the closest match to the 3 functional epitopes, as well as closest to 4 additional variable regions described by  Laux et al. (PMID: 12792509).  
+**Background:** DPB1 alleles have three variable regions that define the major functional antibody epitopes, as described in Morris et al. (PMID: 39277973). For DPB1 alleles that are not present on the single antigen bead (SAB) panel, it can be difficult to determine if antibodies will react. This table provides surrogates: alleles on the SAB panel that have the same functional epitopes. The surrogate alleles are listed in order of the closest match to the 3 functional epitopes, as well as closest to 4 additional variable regions described by  Laux et al. (PMID: 12792509). For many alleles, there are no 3-epitope matches, due either to the epitope or because sequence for that epitope is not known. For these alleles, surrogates that match at the 55 and 84 epitopes are provided.
   
 **Note:** Amino acid sequences that do not correspond to the standard epitopes
 (55AAE, DED or DEE; 84DEAV, GGPM or VGPM; 96K/170I or R/T) are highlighted in
@@ -176,10 +189,6 @@ example_alleles <- c("HLA-DPB1*03:01", "HLA-DPB1*02:02", "HLA-DPB1*85:01")
 Similarly, many of the 96/170 sequences are missing from the IMGT/HLA database,
 and will also be highlighted in
 [yellow]{style="background-color: #ffeb3b"}.
-Lastly, many alleles do not have a surrogate on the SAB panel that matches all
-three epitopes, and are again highlighted in
-[yellow]{style="background-color: #ffeb3b"}.
-These alleles will need more careful epitope analysis to predict antibody reactivity.
 
 ```{=typst}
 // Define reusable highlight styles with deeper color tones
@@ -192,15 +201,16 @@ These alleles will need more careful epitope analysis to predict antibody reacti
 #Table of DPB1 surrogates
 (DPB1_surrogates
   %>% gt
-  %>% tab_header(title = "DPB1 alleles and core SAB surrogates")
+  %>% tab_header(title = "DPB1 alleles and SAB surrogates")
   %>% cols_label(
     trimmed_allele.test = "Allele",
-    ep_55 = "55 epitope",
-    ep_84 = "84 epitope",
+    ep_55 = "55 epi\u2060tope",
+    ep_84 = "84 epi\u2060tope",
     ep_96_170 = "96/170 epitope",
-    p55_p84_match = "55 and 84 epitope match",
-    pirmary_match = "3 epitope match",
-    surrogates = "Surrogates"
+    p55_p84_match = "55/84 epitope match",
+    pirmary_match = "Three epitope match",
+    three_epitope_surrogates = "3-epitope surrogates",
+    two_epitope_surrogates = "2-epitope surrogates"
   )
   %>% tab_style(
     style = cell_fill(color = "yellow"),
@@ -245,12 +255,14 @@ These alleles will need more careful epitope analysis to predict antibody reacti
     table.font.size = px(10)
   )
  %>% cols_width(
-    trimmed_allele.test ~ pct(8),
-    ep_55 ~ pct(10),
-    ep_84 ~ pct(10),
-    ep_96_170 ~ pct(14),
-    pirmary_match ~ pct(14),
-    surrogates ~ pct(30)
+    trimmed_allele.test ~ pct(7),
+    ep_55 ~ pct(8),
+    ep_84 ~ pct(8),
+    ep_96_170 ~ pct(8),
+    p55_p84_match ~ pct(8),
+    pirmary_match ~ pct(8),
+    three_epitope_surrogates ~ pct(26), 
+    two_epitope_surrogates ~ pct(26)
   )
   %>% tab_style(
     style = cell_text(align = "left"),
@@ -259,23 +271,7 @@ These alleles will need more careful epitope analysis to predict antibody reacti
       cells_body(everything())
     )
   )
-  # %>% tab_style(
-  #   style = cell_borders(
-  #     sides = "bottom",
-  #     weight = px(1),
-  #     color = "black"
-  #   ),
-  #   locations = cells_column_labels(everything())
-  # ) 
-  # %>% tab_style(
-  #   style = cell_borders(
-  #     sides = c("top", "bottom", "left", "right"),
-  #     weight = px(0),
-  #     color = "white"
-  #   ),
-  #   locations = cells_body(everything())
-  # )
- )
+  )
 
 invisible(DPB1_surrogates)
 ```
